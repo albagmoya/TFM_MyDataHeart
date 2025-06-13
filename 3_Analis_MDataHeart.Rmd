@@ -1,0 +1,307 @@
+---
+title: "MyDataHeart: Mapeo de datos de una plataforma de telemedicina (mHeart) y análisis de datos para investigación clínica"
+subtitle: "Actividad de una plataforma de telemedicina (m-Heart) y monitorización de pacientes con trasplante cardíaco. Informe estadístico"
+author: "Alba Garcia Moya"
+
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    fig_caption: true
+    css: logos_css/usr_styles.css
+
+params:
+  muestra: yes
+---
+
+# bibliography: "references.bib"
+---
+
+ 
+
+```{=html}
+<script>
+   $(document).ready(function() {
+     $head = $('#header');
+     <!-- $head.prepend('<img src=\"https://www.idiapjgol.org/images/logo.png\" style=\"float: right ;width: 130px;\"/>') -->
+     <!-- $head.prepend('<img src=\"https://avatars2.githubusercontent.com/u/57066591?s=200&v=4\" style=\"margin-left:25% ;width: 80px;\"/>') -->
+     <!-- $head.prepend('<img src=\"codi/logos_css/logo_sant_pau.png\" style=\"float: left:1;width: 185px;\"/>') -->
+     <!-- $head.prepend('<img src=\"codi/logos_css/logo_santpau.png\" style=\"float: left:1;width: 185px;\"/>') -->
+     $head.prepend('<img src=\"../codi/logos_css/logo_santpau.png\" style=\"float: left:1;width: 185px;\"/>')
+
+   });
+</script>
+```
+::: watermark
+DRAFT
+:::
+
+------------------------------------------------------------------------
+# Objetivo
+# Metodología
+# Tareas a realizar
+
+## Consideraciones clave
+
+Definir resultados (outcomes) en relación a la clasificación de pacientes como "Adherentes" o "No adherentes" según su interacción con la app.
+
+Describir la evolución de las interacciones futuras, según el tipo de interacción y dimensión.
+
+Definir una ventana temporal (por ejemplo, 6-12 meses) para evaluar el porcentaje de pacientes que interactúan.
+
+Dos tipos de resultados: (1) interacciones vía mensajería (rol = emisor), y (2) interacciones a través de registros evolutivos.
+
+Identificar factores asociados a la adherencia.
+
+Aplicar modelos de machine learning para determinar variables predictoras y su peso relativo.
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message=FALSE, warning=FALSE, include=T, size="huge")
+options(scipen=999)  # Mostrar números en formato decimal
+
+# Cargar librerías necesarias
+
+library("dplyr")
+library("tidyr")
+library("lubridate")
+library("compareGroups")
+library("FormatGe")
+library("ggplot2")
+library("Hmisc")
+library("Platan")
+library(knitr)
+library(kableExtra)
+library(stringr)
+
+path_conductor <- here::here("conductor_variables.xls")
+path_cataleg <- here::here("cataleg_atc.xls")
+
+```
+
+```{r lecturadades_Mheart, include = FALSE}
+
+list.files()
+
+# Lectura de datos de la apliacion (ya preparados)
+
+dt_evolutius<-readRDS(here::here("dades/dades_preparades","dt_evolutius.Rds"))
+dt_pacients<-readRDS(here::here("dades/dades_preparades","dt_pacients.Rds"))
+dt_missatges<-readRDS(here::here("dades/dades_preparades","dt_missatges_rol.Rds"))
+
+
+# dt_conductor<-readxl::read_excel(path_conductor)
+# dt_cataleg_atc <-readxl::read_excel(path_cataleg)
+
+```
+
+
+```{r lectura_lab_HC}
+
+# Lectura datos
+
+dt_laboratori<-read.csv2(here::here("dades/historicsHC","MDH_Laboratori.csv"))
+
+# Limpieza de valores: eliminar caracteres especiales y convertir separador decimal
+
+dt_laboratori <- dt_laboratori %>%
+  mutate(VALOR = stringr::str_replace_all(VALOR, "\\/", "")) %>%
+  mutate(VALOR = gsub(",", ".", VALOR)) %>%
+  mutate(VALOR = as.numeric(VALOR)) %>%
+  na.omit() %>%
+  group_by(NHC, CODI_INTERN, DATA) %>%
+  summarise(VALOR = mean(VALOR)) %>%
+  ungroup()
+
+```
+
+
+```{r agregar_per_codi_laboratori}
+
+# Incorporamos el listado de pacienets de la app con su identificador (NHC)
+
+dt_temp <- dt_pacients %>% transmute(NHC = as.integer(NHC), dt_index)
+
+# Unión de los datasets y selección del valor más cercano a la fecha de inclusión
+
+dt_temp <- dt_laboratori %>%
+  left_join(dt_temp) %>%
+  mutate(tmps = dt_index - ymd(DATA)) %>%
+  filter(dt_index - ymd(DATA) < 366 & dt_index - ymd(DATA) >= 0) %>%
+  transmute(NHC, CODI_INTERN = paste0("valor.", CODI_INTERN), dt_index, tmps, VALOR) %>%
+  distinct() %>%
+  group_by(NHC, CODI_INTERN) %>%
+  slice_min(tmps) %>%
+  ungroup()
+
+# Reestructuración a formato ancho
+
+dt_laboratori <- dt_temp %>%
+  pivot_wider(names_from = CODI_INTERN, values_from = VALOR) %>%
+  group_by(NHC, dt_index) %>%
+  summarise(across(everything(), ~ unique(na.omit(.))[1]), .groups = "drop") %>%
+  select(-tmps)
+
+```
+
+
+```{r agregar_per_agrupador_determinacions}
+
+# Diagnósticos cuantitativos (determinaciones clinicas)
+# Lectura datos
+
+dt_diagnostics <- read.csv2(here::here("dades/historicsHC", "MDH_Demografics_Params_Diagnostics.csv"), fileEncoding = "latin1")
+
+# Normalización de codificación y limpieza de campos
+
+dt_diagnostics <- dt_diagnostics %>%
+  mutate(CODI = CODI %>%
+           stringi::stri_enc_toutf8() %>%
+           stringi::stri_trans_general("Latin-ASCII") %>%
+           str_to_upper() %>%
+           str_trim())
+
+# Cargar catálogo de diagnósticos
+
+dt_codis_unics <- read.csv2(here::here("cataleg_diagnostics_unics.csv"), fileEncoding = "latin1") %>%
+  mutate(CODI = CODI %>%
+           stringi::stri_trans_general("Latin-ASCII") %>%
+           str_to_upper() %>%
+           str_trim())
+
+# Filtrar determinaciones cuantitativas
+
+dt_determinacions <- dt_diagnostics %>%
+  left_join(dt_codis_unics, by = "CODI") %>%
+  filter(tipus == "num") %>%
+  mutate(VALOR = as.numeric(VALOR)) %>%
+  na.omit() %>%
+  group_by(NHC, nom_variable, DATA) %>%
+  summarise(VALOR = mean(VALOR)) %>%
+  ungroup()
+
+# Union y Selección del valor más cercano a inclusión
+
+dt_temp <- dt_determinacions %>%
+  left_join(dt_pacients %>% transmute(NHC = as.integer(NHC), dt_index), by = "NHC") %>%
+  mutate(tmps = dt_index - ymd(DATA)) %>%
+  filter(tmps < 366 & tmps >= 0) %>%
+  distinct() %>%
+  group_by(NHC, nom_variable) %>%
+  slice_min(tmps) %>%
+  ungroup()
+
+# Formato ancho
+
+dt_determinacions <- dt_temp %>%
+  pivot_wider(names_from = nom_variable, values_from = VALOR) %>%
+  group_by(NHC, dt_index) %>%
+  summarise(across(everything(), ~ unique(na.omit(.))[1]), .groups = "drop") %>%
+  select(-tmps)
+
+
+```
+
+
+```{r agregar_per_agrupador_diagnostic}
+
+# Diagnósticos cualitativos (presencia/ausencia)
+
+dt_diagnostics_filtre <- dt_diagnostics %>%
+  left_join(dt_codis_unics, by = "CODI") %>%
+  filter(tipus == "dx") %>%
+  select(NHC, DATA, nom_variable, VALOR)
+
+# Union y Selección de todos los diagnosticos previos a la inclusión
+
+dt_temp <- dt_diagnostics_filtre %>%
+  left_join(dt_pacients %>% transmute(NHC = as.integer(NHC), dt_index), by = "NHC") %>%
+  mutate(DATA = ymd(DATA)) %>%
+  filter(DATA <= dt_index)
+
+# Formato ancho: 1 si presente, 0 si ausente
+
+dt_diagnostics_filtre <- dt_temp %>%
+  group_by(NHC, nom_variable, dt_index) %>%
+  summarise(DATA = min(DATA), .groups = "drop") %>%
+  pivot_wider(names_from = nom_variable, values_from = DATA) %>%
+  mutate(across(-c(NHC, dt_index), ~ ifelse(!is.na(.), 1, 0)))
+
+
+```
+
+
+
+```{r agregar_per_agrupador_preinscripcions}
+
+# Lectura datos
+# Prescripciones farmacologicas (con códigos ATC)
+
+dt_prescripcions <- read.csv2(here::here("dades/historicsHC", "MDH_Prescripcions.csv"), fileEncoding = "Latin1")
+
+# Limpieza de codificación
+
+dt_prescripcions <- dt_prescripcions %>%
+  mutate(CODI = CODI %>%
+           stringi::stri_enc_toutf8() %>%
+           stringi::stri_trans_general("Latin-ASCII") %>%
+           str_to_upper() %>%
+           str_trim())
+
+# Asignar fecha de inclusión
+
+dt_temp <- dt_prescripcions %>%
+  left_join(dt_pacients %>% transmute(NHC = as.integer(NHC), dt_index), by = "NHC") %>%
+  mutate(
+    DATA_INICI = ymd(substr(DATA_INICI, 1, 8)),
+    DATA_FI = ymd(substr(DATA_FI, 1, 8))
+  ) %>%
+  rename(cod = VALOR)
+
+# Unificación de formato con catálogo ATC
+
+dt_temp <- dt_temp %>%
+  mutate(cod = str_trim(str_to_upper(cod)))
+
+dt_cata_atc <- dt_cata_atc %>%
+  mutate(cod = str_trim(str_to_upper(cod)))
+
+# Filtrado por prescripciones activas en la fecha de inclusión
+
+dt_prescripcions <- dt_temp %>%
+  left_join(dt_cata_atc, by = "cod") %>%
+  filter(dt_index >= DATA_INICI, dt_index <= DATA_FI) %>%
+  group_by(NHC, CODI, dt_index) %>%
+  summarise(has_prescripcio = 1, .groups = "drop") %>%
+  pivot_wider(
+    names_from = CODI,
+    values_from = has_prescripcio,
+    values_fill = 0  # si no hay prescripción, marcamos con 0
+  )
+
+```
+
+
+\`\`\`  
+
+<hr />
+
+<p style="text-align: center;">
+
+A work by $Jordi Real$ </a>
+
+</p>
+
+<p style="text-align: center;">
+
+$Ll-li System$ </a>
+
+</p>
+
+<p style="text-align: center;">
+
+[<em><https://github.com/USR-DAPCAT/></em>]{style="color: #808080;"}
+
+</p>
