@@ -1,7 +1,10 @@
 # TFM_MyDataHeart
 
 Evaluar el nivel de actividad de una plataforma de seguimiento de pacientes trasplantados de corazón (mHeart), mediante el análisis de las interacciones y frecuencia de uso que los usuarios hacen a medio plazo (primer año), así como identificar los factores asociados que permitan identificar perfiles de usuarios con un mayor grado de implicación y, por lo tanto, mayor adherencia a la tecnología.
+
+
 2.2.	 Objetivos específicos
+
 •	Analizar la evolución mensual de la frecuencia de uso de la plataforma mHeart durante el primer año de seguimiento, así como la frecuencia de uso acumulada en diferentes periodos (por ejemplo: primer año, mensual, semestral).
 •	Cuantificar y caracterizar el número de accesos a la plataforma con información reportada, tanto a nivel global como desglosado por tipo de dato introducido:
 o	Parámetros clínicos. (por ejemplo: PAS, PAD, peso, etc.)
